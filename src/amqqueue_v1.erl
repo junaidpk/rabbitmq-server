@@ -80,8 +80,6 @@
 
 -define(record_version, ?MODULE).
 
-% TODO #160169569 what about dialyzer types?
-
 -record(amqqueue, {
           name, durable, auto_delete, exclusive_owner = none, %% immutable
           arguments,                   %% immutable
@@ -98,9 +96,43 @@
           vhost,                       %% secondary index
           options = #{}}).
 
--opaque amqqueue_v1() :: #amqqueue{}.
+-type amqqueue() :: amqqueue_v1().
+-opaque amqqueue_v1() :: #amqqueue{
+                            name :: rabbit_amqqueue:name(),
+                            durable :: boolean(),
+                            auto_delete :: boolean(),
+                            exclusive_owner :: rabbit_types:maybe(pid()),
+                            arguments :: rabbit_framing:amqp_table(),
+                            pid :: pid() | none,
+                            slave_pids :: [pid()],
+                            vhost :: rabbit_types:vhost()
+                           }.
 
--export_type([amqqueue_v1/0]).
+-type amqqueue_pattern() :: amqqueue_v1_pattern().
+-opaque amqqueue_v1_pattern() :: #amqqueue{
+                                    name :: rabbit_amqqueue:name() | '_',
+                                    durable :: '_',
+                                    auto_delete :: '_',
+                                    exclusive_owner :: '_',
+                                    arguments :: '_',
+                                    pid :: '_',
+                                    slave_pids :: '_',
+                                    vhost :: '_'
+                                   }.
+
+-export_type([amqqueue/0,
+              amqqueue_v1/0,
+              amqqueue_pattern/0,
+              amqqueue_v1_pattern/0]).
+
+-spec new(rabbit_amqqueue:name(),
+          rabbit_types:maybe(pid()),
+          boolean(),
+          boolean(),
+          rabbit_types:maybe(pid()),
+          rabbit_framing:amqp_table(),
+          rabbit_types:vhost(),
+          #{}) -> amqqueue().
 
 new(Name,
     Pid,
@@ -120,6 +152,16 @@ new(Name,
       Args,
       VHost,
       Options).
+
+-spec new_with_version(amqqueue_v1,
+                       rabbit_amqqueue:name(),
+                       rabbit_types:maybe(pid()),
+                       boolean(),
+                       boolean(),
+                       rabbit_types:maybe(pid()),
+                       rabbit_framing:amqp_table(),
+                       rabbit_types:vhost(),
+                       #{}) -> amqqueue().
 
 new_with_version(?record_version,
                  Name,
@@ -146,21 +188,33 @@ new_with_version(?record_version,
               vhost              = VHost,
               options            = Options}.
 
+-spec is_amqqueue(any()) -> boolean().
+
 is_amqqueue(#amqqueue{}) -> true;
 is_amqqueue(_)           -> false.
+
+-spec record_version_to_use() -> amqqueue_v1.
 
 record_version_to_use() ->
     ?record_version.
 
+-spec upgrade(amqqueue()) -> amqqueue().
+
 upgrade(#amqqueue{} = Queue) ->
     Queue.
+
+-spec upgrade_to(amqqueue_v1, amqqueue()) -> amqqueue().
 
 upgrade_to(?record_version, #amqqueue{} = Queue) ->
     Queue.
 
 % arguments
 
+-spec get_arguments(amqqueue()) -> rabbit_framing:amqp_table().
+
 get_arguments(#amqqueue{arguments = Args}) -> Args.
+
+-spec set_arguments(amqqueue(), rabbit_framing:amqp_table()) -> amqqueue().
 
 set_arguments(#amqqueue{} = Queue, Args) ->
     Queue#amqqueue{arguments = Args}.
@@ -268,7 +322,11 @@ fields(?record_version) -> record_info(fields, amqqueue).
 
 field_vhost() -> #amqqueue.vhost.
 
+-spec pattern_match_all() -> amqqueue_pattern().
+
 pattern_match_all() -> #amqqueue{_ = '_'}.
+
+-spec pattern_match_on_name(rabbit_amqqueue:name()) -> amqqueue_pattern().
 
 pattern_match_on_name(Name) -> #amqqueue{name = Name, _ = '_'}.
 

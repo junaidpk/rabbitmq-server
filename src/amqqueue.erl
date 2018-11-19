@@ -91,33 +91,58 @@
 -define(record_version, amqqueue_v2).
 
 -record(amqqueue, {
-          name:: rabbit_amqqueue:name() | '_',                       %% immutable
-          durable:: boolean() | '_',                                 %% immutable
-          auto_delete:: boolean() | '_',                             %% immutable
-          exclusive_owner = none :: rabbit_types:maybe(pid()) | '_', %% immutable
-          arguments :: rabbit_framing:amqp_table() | '_',            %% immutable
-          pid :: pid() | {atom(), atom()} | none | '_', %% durable (just so we know home
-                                                        %% node)
-          slave_pids :: [pid()] | '_',       %% transient
-          sync_slave_pids,             %% transient
-          recoverable_slaves,          %% durable
-          policy,                      %% durable, implicit update as above
-          operator_policy,             %% durable, implicit update as above
-          gm_pids,                     %% transient
-          decorators,                  %% transient, recalculated as above
-          state,                       %% durable (have we crashed?)
+          name,                   %% immutable
+          durable,                %% immutable
+          auto_delete,            %% immutable
+          exclusive_owner = none, %% immutable
+          arguments,              %% immutable
+          pid,                    %% durable (just so we know home node)
+          slave_pids,             %% transient
+          sync_slave_pids,        %% transient
+          recoverable_slaves,     %% durable
+          policy,                 %% durable, implicit update as above
+          operator_policy,        %% durable, implicit update as above
+          gm_pids,                %% transient
+          decorators,             %% transient, recalculated as above
+          state,                  %% durable (have we crashed?)
           policy_version,
           slave_pids_pending_shutdown,
-          vhost :: rabbit_types:vhost() | '_', %% secondary index
+          vhost, %% secondary index
           options = #{},
-          type = classic,
+          type = ?amqqueue_v1_type,
           quorum_nodes }).
 
--opaque amqqueue_v2() :: #amqqueue{}.
--opaque amqqueue() :: amqqueue_v1:amqqueue_v1() | amqqueue_v2().
+-type amqqueue() :: amqqueue_v1:amqqueue_v1() | amqqueue_v2().
+-opaque amqqueue_v2() :: #amqqueue{
+                            name :: rabbit_amqqueue:name(),
+                            durable :: boolean(),
+                            auto_delete :: boolean(),
+                            exclusive_owner :: rabbit_types:maybe(pid()),
+                            arguments :: rabbit_framing:amqp_table(),
+                            pid :: pid() | {atom(), atom()} | none,
+                            slave_pids :: [pid()],
+                            vhost :: rabbit_types:vhost(),
+                            type :: atom()
+                           }.
+
+-type amqqueue_pattern() :: amqqueue_v1:amqqueue_v1_pattern() |
+                            amqqueue_v2_pattern().
+-opaque amqqueue_v2_pattern() :: #amqqueue{
+                                    name :: rabbit_amqqueue:name() | '_',
+                                    durable :: '_',
+                                    auto_delete :: '_',
+                                    exclusive_owner :: '_',
+                                    arguments :: '_',
+                                    pid :: '_',
+                                    slave_pids :: '_',
+                                    vhost :: '_',
+                                    type :: atom() | '_'
+                                   }.
 
 -export_type([amqqueue/0,
-              amqqueue_v2/0]).
+              amqqueue_v2/0,
+              amqqueue_pattern/0,
+              amqqueue_v2_pattern/0]).
 
 -spec new(rabbit_amqqueue:name(),
           rabbit_types:maybe(pid()),
@@ -163,6 +188,28 @@ new(Name,
               VHost,
               Options)
     end.
+
+-spec new_with_version
+(amqqueue_v2,
+ rabbit_amqqueue:name(),
+ rabbit_types:maybe(pid()),
+ boolean(),
+ boolean(),
+ rabbit_types:maybe(pid()),
+ rabbit_framing:amqp_table(),
+ rabbit_types:vhost(),
+ #{},
+ classic | quorum) -> amqqueue_v2();
+(amqqueue_v1,
+ rabbit_amqqueue:name(),
+ rabbit_types:maybe(pid()),
+ boolean(),
+ boolean(),
+ rabbit_types:maybe(pid()),
+ rabbit_framing:amqp_table(),
+ rabbit_types:vhost(),
+ #{},
+ classic) -> amqqueue_v1:amqqueue_v1().
 
 new_with_version(?record_version,
                  Name,
@@ -211,8 +258,12 @@ new_with_version(Version,
       VHost,
       Options).
 
+-spec is_amqqueue(any()) -> boolean().
+
 is_amqqueue(#amqqueue{}) -> true;
 is_amqqueue(Queue)       -> amqqueue_v1:is_amqqueue(Queue).
+
+-spec record_version_to_use() -> amqqueue_v1 | amqqueue_v2.
 
 record_version_to_use() ->
     case rabbit_feature_flags:is_enabled(quorum_queue) of
@@ -220,8 +271,14 @@ record_version_to_use() ->
         false -> amqqueue_v1:record_version_to_use()
     end.
 
+-spec upgrade(amqqueue()) -> amqqueue().
+
 upgrade(#amqqueue{} = Queue) -> Queue;
 upgrade(OldQueue)            -> upgrade_to(record_version_to_use(), OldQueue).
+
+-spec upgrade_to
+(amqqueue_v2, amqqueue()) -> amqqueue_v2();
+(amqqueue_v1, amqqueue_v1:amqqueue_v1()) -> amqqueue_v1:amqqueue_v1().
 
 upgrade_to(?record_version, #amqqueue{} = Queue) ->
     Queue;
@@ -234,10 +291,14 @@ upgrade_to(Version, OldQueue) ->
 
 % arguments
 
+-spec get_arguments(amqqueue()) -> rabbit_framing:amqp_table().
+
 get_arguments(#amqqueue{arguments = Args}) ->
     Args;
 get_arguments(Queue) ->
     amqqueue_v1:get_arguments(Queue).
+
+-spec set_arguments(amqqueue(), rabbit_framing:amqp_table()) -> amqqueue().
 
 set_arguments(#amqqueue{} = Queue, Args) ->
     Queue#amqqueue{arguments = Args};
@@ -433,13 +494,15 @@ field_vhost() ->
         _               -> amqqueue_v1:field_vhost()
     end.
 
+-spec pattern_match_all() -> amqqueue_pattern().
+
 pattern_match_all() ->
     case record_version_to_use() of
         ?record_version -> #amqqueue{_ = '_'};
         _               -> amqqueue_v1:pattern_match_all()
     end.
 
--spec pattern_match_on_name(rabbit_amqqueue:name()) -> tuple().
+-spec pattern_match_on_name(rabbit_amqqueue:name()) -> amqqueue_pattern().
 
 pattern_match_on_name(Name) ->
     case record_version_to_use() of
@@ -447,7 +510,7 @@ pattern_match_on_name(Name) ->
         _               -> amqqueue_v1:pattern_match_on_name(Name)
     end.
 
--spec pattern_match_on_type(rabbit_amqqueue:type()) -> tuple().
+-spec pattern_match_on_type(rabbit_amqqueue:type()) -> amqqueue_pattern().
 
 pattern_match_on_type(Type) ->
     case record_version_to_use() of
